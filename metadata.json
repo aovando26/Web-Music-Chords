@@ -1,0 +1,7 @@
+{
+  "name": "Sonic Hands",
+  "description": "A hand-tracking musical experience where your movements generate particles and sound.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@keyframes grow {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(2.5); }
+}
+
+.animate-grow {
+  animation: grow 1s ease-in-out infinite;
+}
