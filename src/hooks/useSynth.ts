@@ -72,9 +72,9 @@ export const useSynth = (hands: any) => {
     const handY = landmarks[0].y;
     let newChord: keyof typeof CHORDS = 'major';
     
-    if (handY < 0.2) newChord = 'celestial';
-    else if (handY < 0.4) newChord = 'ethereal';
-    else if (handY < 0.6) newChord = 'major';
+    if (handY < 0.35) newChord = 'celestial';
+    else if (handY < 0.5) newChord = 'ethereal';
+    else if (handY < 0.65) newChord = 'major';
     else if (handY < 0.8) newChord = 'minor';
     else newChord = 'deep';
 
