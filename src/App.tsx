@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import * as Tone from 'tone';
 import { HandTracker } from './components/HandTracker';
 import { Visualizer } from './components/Visualizer';
 import { useSynth } from './hooks/useSynth';
@@ -12,21 +13,79 @@ import { motion, AnimatePresence } from 'motion/react';
 export default function App() {
   const [hands, setHands] = useState<any>(null);
   const [started, setStarted] = useState(false);
+  const [awaitingHands, setAwaitingHands] = useState(false);
+  const noHandsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasAwaiting = useRef(false);
+  const overlayShownAt = useRef<number | null>(null);
+
+  const playPing = useCallback(() => {
+    const synth = new Tone.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.4 },
+    }).toDestination();
+    synth.volume.value = -10;
+    synth.triggerAttackRelease('C5', '16n', Tone.now());
+    synth.triggerAttackRelease('E5', '16n', Tone.now() + 0.1);
+    setTimeout(() => synth.dispose(), 1000);
+  }, []);
+
+  const showOverlay = useCallback(() => {
+    wasAwaiting.current = true;
+    overlayShownAt.current = Date.now();
+    setAwaitingHands(true);
+  }, []);
+
+  const dismissOverlay = useCallback(() => {
+    if (!overlayShownAt.current) return;
+    const elapsed = Date.now() - overlayShownAt.current;
+    const remaining = Math.max(0, 2000 - elapsed);
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    dismissTimer.current = setTimeout(() => {
+      playPing();
+      wasAwaiting.current = false;
+      overlayShownAt.current = null;
+      setAwaitingHands(false);
+    }, remaining);
+  }, [playPing]);
 
   const handleHandsDetected = useCallback((results: any) => {
     setHands(results);
   }, []);
 
-  const { activeChord, initialize, isInitialized } = useSynth(hands);
+  const { activeChord, activeChords, initialize, isInitialized } = useSynth(hands);
 
   const handleStart = async () => {
     await initialize();
     setStarted(true);
+    showOverlay();
   };
+
+  useEffect(() => {
+    if (!started) return;
+    const hasHands = (hands?.landmarks?.length ?? 0) > 0;
+    if (hasHands) {
+      if (noHandsTimer.current) {
+        clearTimeout(noHandsTimer.current);
+        noHandsTimer.current = null;
+      }
+      if (wasAwaiting.current) {
+        dismissOverlay();
+      }
+    } else if (!noHandsTimer.current) {
+      // Only schedule if a timer isn't already pending — the effect
+      // runs every frame so we must not reset it on every re-render.
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+      noHandsTimer.current = setTimeout(() => {
+        noHandsTimer.current = null;
+        showOverlay();
+      }, 1500);
+    }
+  }, [hands, started, dismissOverlay, showOverlay]);
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden font-sans text-white">
-      <Visualizer hands={hands} activeChord={activeChord} />
+      <Visualizer hands={hands} activeChords={activeChords} />
       
       <AnimatePresence>
         {!started && (
@@ -75,6 +134,28 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {started && awaitingHands && (
+          <motion.div
+            key="awaiting"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
+            className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md"
+          >
+            <div className="relative flex items-center justify-center mb-10">
+              <div className="absolute w-36 h-36 rounded-full border border-cyan-400/20 animate-ping" style={{ animationDuration: '2s' }} />
+              <div className="absolute w-28 h-28 rounded-full border border-cyan-400/10 animate-ping" style={{ animationDuration: '2s', animationDelay: '0.4s' }} />
+              <div className="w-20 h-20 rounded-full border-2 border-zinc-700 border-t-cyan-400 animate-spin" style={{ animationDuration: '1.2s' }} />
+              <div className="absolute w-12 h-12 rounded-full border border-cyan-400/40 animate-pulse" />
+            </div>
+            <p className="text-[10px] font-mono uppercase tracking-[0.4em] text-cyan-400 mb-3">Awaiting Detection</p>
+            <p className="text-sm text-zinc-400">Place your hands in front of the camera</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {started && (
         <>
           <HandTracker onHandsDetected={handleHandsDetected} />
@@ -87,9 +168,9 @@ export default function App() {
                   Synth Engine: {isInitialized ? 'Active' : 'Initializing'} // {hands?.landmarks?.length || 0} Hands
                 </span>
               </div>
-              {activeChord && (
+              {activeChords.some(c => c) && (
                 <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-cyan-400 animate-pulse">
-                  Playing: {activeChord.toUpperCase()} Chord
+                  Playing: {activeChords.filter(Boolean).map(c => c!.toUpperCase()).join(' + ')}
                 </div>
               )}
             </div>
@@ -100,11 +181,11 @@ export default function App() {
               <div>
                 <h2 className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-500 mb-1">Y-Axis Control</h2>
                 <div className="space-y-1">
-                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChord === 'celestial' ? 'text-cyan-400' : 'text-zinc-700'}`}>↑ Celestial</p>
-                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChord === 'ethereal' ? 'text-cyan-400' : 'text-zinc-700'}`}>- Ethereal</p>
-                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChord === 'major' ? 'text-cyan-400' : 'text-zinc-700'}`}>- Major</p>
-                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChord === 'minor' ? 'text-cyan-400' : 'text-zinc-700'}`}>- Minor</p>
-                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChord === 'deep' ? 'text-cyan-400' : 'text-zinc-700'}`}>↓ Deep</p>
+                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChords.includes('celestial') ? 'text-cyan-400' : 'text-zinc-700'}`}>↑ Celestial</p>
+                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChords.includes('ethereal') ? 'text-cyan-400' : 'text-zinc-700'}`}>- Ethereal</p>
+                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChords.includes('major') ? 'text-cyan-400' : 'text-zinc-700'}`}>- Major</p>
+                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChords.includes('minor') ? 'text-cyan-400' : 'text-zinc-700'}`}>- Minor</p>
+                  <p className={`text-[10px] tracking-widest uppercase transition-colors ${activeChords.includes('deep') ? 'text-cyan-400' : 'text-zinc-700'}`}>↓ Deep</p>
                 </div>
               </div>
             </div>

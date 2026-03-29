@@ -9,22 +9,39 @@ const CHORDS = {
   deep: ["E2", "G2", "B2"]
 };
 
+type ChordName = keyof typeof CHORDS;
+
+function getChordForY(y: number): ChordName {
+  if (y < 0.35) return 'celestial';
+  if (y < 0.50) return 'ethereal';
+  if (y < 0.65) return 'major';
+  if (y < 0.80) return 'minor';
+  return 'deep';
+}
+
+interface HandState {
+  isPinching: boolean;
+  chord: ChordName | null;
+}
+
 export const useSynth = (hands: any) => {
   const synthRef = useRef<Tone.PolySynth | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [activeChord, setActiveChord] = useState<string | null>(null);
-  const isPinching = useRef(false);
+  const [activeChords, setActiveChords] = useState<(ChordName | null)[]>([null, null]);
+  const handStates = useRef<HandState[]>([
+    { isPinching: false, chord: null },
+    { isPinching: false, chord: null },
+  ]);
 
   const initialize = async () => {
     if (isInitialized) return;
-    
+
     await Tone.start();
-    
-    // Create a compressor to prevent clipping and add punch
+
     const limiter = new Tone.Limiter(-1).toDestination();
-    
+
     synthRef.current = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "triangle" }, // More audible than sine
+      oscillator: { type: "triangle" },
       envelope: {
         attack: 0.05,
         decay: 0.1,
@@ -32,9 +49,9 @@ export const useSynth = (hands: any) => {
         release: 0.8
       }
     }).connect(limiter);
-    
-    synthRef.current.volume.value = -6; // Boost volume slightly
-    
+
+    synthRef.current.volume.value = -6;
+
     setIsInitialized(true);
     console.log("Synth engine initialized");
   };
@@ -46,56 +63,59 @@ export const useSynth = (hands: any) => {
   }, []);
 
   useEffect(() => {
-    if (!isInitialized || !synthRef.current || !hands || !hands.landmarks) return;
+    if (!isInitialized || !synthRef.current) return;
 
-    const landmarks = hands.landmarks[0];
-    if (!landmarks) {
-      if (isPinching.current) {
-        synthRef.current.releaseAll();
-        isPinching.current = false;
-        setActiveChord(null);
+    const synth = synthRef.current;
+    const states = handStates.current;
+    const landmarkSets: any[] = hands?.landmarks ?? [];
+    const updated: (ChordName | null)[] = [null, null];
+
+    for (let i = 0; i < 2; i++) {
+      const landmarks = landmarkSets[i];
+      const state = states[i];
+
+      if (!landmarks) {
+        if (state.isPinching && state.chord) {
+          synth.triggerRelease(CHORDS[state.chord]);
+          state.isPinching = false;
+          state.chord = null;
+        }
+        continue;
       }
-      return;
+
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const distance = Math.sqrt(
+        Math.pow(thumbTip.x - indexTip.x, 2) +
+        Math.pow(thumbTip.y - indexTip.y, 2)
+      );
+
+      const currentlyPinching = distance < 0.05;
+      const newChord = getChordForY(landmarks[0].y);
+
+      if (currentlyPinching && !state.isPinching) {
+        synth.triggerAttack(CHORDS[newChord]);
+        state.isPinching = true;
+        state.chord = newChord;
+      } else if (currentlyPinching && state.isPinching && newChord !== state.chord) {
+        if (state.chord) synth.triggerRelease(CHORDS[state.chord]);
+        synth.triggerAttack(CHORDS[newChord]);
+        state.chord = newChord;
+      } else if (!currentlyPinching && state.isPinching) {
+        if (state.chord) synth.triggerRelease(CHORDS[state.chord]);
+        state.isPinching = false;
+        state.chord = null;
+      }
+
+      updated[i] = state.chord;
     }
 
-    // Pinch Detection: Thumb tip (4) and Index tip (8)
-    const thumbTip = landmarks[4];
-    const indexTip = landmarks[8];
-    const distance = Math.sqrt(
-      Math.pow(thumbTip.x - indexTip.x, 2) + 
-      Math.pow(thumbTip.y - indexTip.y, 2)
-    );
+    setActiveChords([...updated]);
+  }, [hands, isInitialized]);
 
-    const currentlyPinching = distance < 0.05;
+  // Keep singular activeChord for backward-compat (first active hand wins)
+  const activeChord = activeChords[0] ?? activeChords[1] ?? null;
 
-    // Y-Axis Mapping: Hand height (using palm base 0)
-    const handY = landmarks[0].y;
-    let newChord: keyof typeof CHORDS = 'major';
-    
-    if (handY < 0.35) newChord = 'celestial';
-    else if (handY < 0.5) newChord = 'ethereal';
-    else if (handY < 0.65) newChord = 'major';
-    else if (handY < 0.8) newChord = 'minor';
-    else newChord = 'deep';
-
-    if (currentlyPinching && !isPinching.current) {
-      // Start Pinch
-      synthRef.current.triggerAttack(CHORDS[newChord]);
-      isPinching.current = true;
-      setActiveChord(newChord);
-    } else if (currentlyPinching && isPinching.current && newChord !== activeChord) {
-      // Chord Change while pinching
-      synthRef.current.releaseAll();
-      synthRef.current.triggerAttack(CHORDS[newChord]);
-      setActiveChord(newChord);
-    } else if (!currentlyPinching && isPinching.current) {
-      // End Pinch
-      synthRef.current.releaseAll();
-      isPinching.current = false;
-      setActiveChord(null);
-    }
-  }, [hands, activeChord]);
-
-  return { activeChord, initialize, isInitialized };
+  return { activeChord, activeChords, initialize, isInitialized };
 };
 

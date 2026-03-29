@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 
 interface VisualizerProps {
   hands: any;
-  activeChord: string | null;
+  activeChords: (string | null)[];
 }
 
 const HAND_CONNECTIONS = [
@@ -14,7 +14,7 @@ const HAND_CONNECTIONS = [
   [5, 9], [9, 13], [13, 17] // palm
 ];
 
-export const Visualizer: React.FC<VisualizerProps> = ({ hands, activeChord }) => {
+export const Visualizer: React.FC<VisualizerProps> = ({ hands, activeChords }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -36,7 +36,8 @@ export const Visualizer: React.FC<VisualizerProps> = ({ hands, activeChord }) =>
 
       // Draw hand landmarks (skeleton)
       if (hands && hands.landmarks) {
-        hands.landmarks.forEach((landmark: any) => {
+        hands.landmarks.forEach((landmark: any, handIdx: number) => {
+          const activeChord = activeChords[handIdx] ?? null;
           const color = activeChord ? '#22d3ee' : '#ffffff';
           
           // Draw connections
@@ -104,7 +105,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ hands, activeChord }) =>
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
     };
-  }, [hands, activeChord]);
+  }, [hands, activeChords]);
 
   return (
     <canvas
